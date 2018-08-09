@@ -1,15 +1,16 @@
 PRODUCT_BUILD_PROP_OVERRIDES += BUILD_UTC_DATE=0
 
-ifeq ($(PRODUCT_GMS_CLIENTID_BASE),)
 PRODUCT_PROPERTY_OVERRIDES += \
-    ro.com.google.clientidbase=android-google
-else
-PRODUCT_PROPERTY_OVERRIDES += \
-    ro.com.google.clientidbase=$(PRODUCT_GMS_CLIENTID_BASE)
-endif
+    ro.com.google.clientidbase=android-oneplus
 
 PRODUCT_PROPERTY_OVERRIDES += \
-    keyguard.no_require_sim=true
+    keyguard.no_require_sim=true \
+    ro.url.legal=fckgoogle \
+    ro.url.legal.android_privacy=fckgoogle \
+    ro.com.android.wifi-watchlist=GoogleGuest \
+    ro.setupwizard.enterprise_mode=1 \
+    ro.com.android.dateformat=MM-dd-yyyy \
+    ro.com.android.dataroaming=false
 
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.build.selinux=1
@@ -17,11 +18,6 @@ PRODUCT_PROPERTY_OVERRIDES += \
 # Disable excessive dalvik debug messages
 PRODUCT_PROPERTY_OVERRIDES += \
     dalvik.vm.debug.alloc=0
-
-# Default sounds
-PRODUCT_PROPERTY_OVERRIDES += \
-    ro.config.notification_sound=Argon.ogg \
-    ro.config.alarm_alert=Hassium.ogg
 
 # Backup Tool
 PRODUCT_COPY_FILES += \
@@ -41,10 +37,6 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
     vendor/slim/prebuilt/common/etc/init.d/50selinuxrelabel:system/etc/init.d/50selinuxrelabel
 
-# Copy over added mimetype supported in libcore.net.MimeUtils
-PRODUCT_COPY_FILES += \
-    vendor/slim/prebuilt/common/lib/content-types.properties:system/lib/content-types.properties
-
 # Enable SIP+VoIP on all targets
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.sip.voip.xml:system/etc/permissions/android.software.sip.voip.xml
@@ -59,48 +51,32 @@ PRODUCT_COPY_FILES += \
     vendor/slim/prebuilt/common/etc/init.d/90userinit:system/etc/init.d/90userinit \
     vendor/slim/prebuilt/common/bin/sysinit:system/bin/sysinit
 
-# debug packages
-ifneq ($(TARGET_BUILD_VARIENT),user)
+# Required packages
 PRODUCT_PACKAGES += \
-    Development
-endif
-
-# TWRP
-ifeq ($(WITH_TWRP),true)
-include vendor/slim/config/twrp.mk
-endif
+    Development \
+    SpareParts \
+    su
 
 # Optional packages
 PRODUCT_PACKAGES += \
-    Basic \
-    LiveWallpapersPicker \
-    PhaseBeam
+    Basic
 
-# Include explicitly to work around GMS issues
+# CM Hardware Abstraction Framework
 PRODUCT_PACKAGES += \
-    libprotobuf-cpp-full \
-    librsjni
-
-#SnapdragonGallery
-PRODUCT_PACKAGES += \
-    SnapdragonGallery
+    org.cyanogenmod.hardware \
+    org.cyanogenmod.hardware.xml
 
 # Extra Optional packages
 PRODUCT_PACKAGES += \
-    SlimBootAnimation \
     SlimLauncher \
-    SlimWallpaperResizer \
-    SlimWallpapers \
     LatinIME \
-    BluetoothExt \
-    WallpaperPicker
+    MixPlorer\
+    BluetoothExt
 
 #    SlimFileManager removed until updated
 
-ifneq ($(DISABLE_SLIM_FRAMEWORK), true)
 ## Slim Framework
-include frameworks/slim/slim_framework.mk
-endif
+include frameworks/opt/slim/slim_framework.mk
 
 ## Don't compile SystemUITests
 EXCLUDE_SYSTEMUI_TESTS := true
@@ -115,16 +91,6 @@ PRODUCT_PACKAGES += \
     fsck.ntfs \
     mount.ntfs
 
-# Custom off-mode charger
-ifneq ($(WITH_CM_CHARGER),false)
-PRODUCT_PACKAGES += \
-    charger_res_images \
-    cm_charger_res_images \
-    font_log.png \
-    libhealthd.cm
-endif
-
-# ExFAT support
 WITH_EXFAT ?= true
 ifeq ($(WITH_EXFAT),true)
 TARGET_USES_EXFAT := true
@@ -144,27 +110,60 @@ PRODUCT_PROPERTY_OVERRIDES += \
     media.sf.omx-plugin=libffmpeg_omx.so \
     media.sf.extractor-plugin=libffmpeg_extractor.so
 
-# Telephony
-PRODUCT_PACKAGES += \
-    telephony-ext
-
-PRODUCT_BOOT_JARS += \
-    telephony-ext
+# easy way to extend to add more packages
+-include vendor/extra/product.mk
 
 PRODUCT_PACKAGE_OVERLAYS += \
-    vendor/slim/overlay/common \
-    vendor/slim/overlay/dictionaries
+    vendor/slim/overlay/common
+
+# Boot animation include
+ifneq ($(TARGET_SCREEN_WIDTH) $(TARGET_SCREEN_HEIGHT),$(space))
+
+# determine the smaller dimension
+TARGET_BOOTANIMATION_SIZE := $(shell \
+  if [ $(TARGET_SCREEN_WIDTH) -lt $(TARGET_SCREEN_HEIGHT) ]; then \
+    echo $(TARGET_SCREEN_WIDTH); \
+  else \
+    echo $(TARGET_SCREEN_HEIGHT); \
+  fi )
+
+# get a sorted list of the sizes
+bootanimation_sizes := $(subst .zip,, $(shell ls vendor/slim/prebuilt/common/bootanimation))
+bootanimation_sizes := $(shell echo -e $(subst $(space),'\n',$(bootanimation_sizes)) | sort -rn)
+
+# find the appropriate size and set
+define check_and_set_bootanimation
+$(eval TARGET_BOOTANIMATION_NAME := $(shell \
+  if [ -z "$(TARGET_BOOTANIMATION_NAME)" ]; then
+    if [ $(1) -le $(TARGET_BOOTANIMATION_SIZE) ]; then \
+      echo $(1); \
+      exit 0; \
+    fi;
+  fi;
+  echo $(TARGET_BOOTANIMATION_NAME); ))
+endef
+$(foreach size,$(bootanimation_sizes), $(call check_and_set_bootanimation,$(size)))
+
+ifeq ($(TARGET_BOOTANIMATION_HALF_RES),true)
+PRODUCT_COPY_FILES += \
+    vendor/slim/prebuilt/common/bootanimation/halfres/$(TARGET_BOOTANIMATION_NAME).zip:system/media/bootanimation.zip
+else
+PRODUCT_COPY_FILES += \
+    vendor/slim/prebuilt/common/bootanimation/$(TARGET_BOOTANIMATION_NAME).zip:system/media/bootanimation.zip
+endif
+endif
 
 # Versioning System
-# Slim version.
-PRODUCT_VERSION_MAJOR = $(PLATFORM_VERSION)
+# SlimLP first version.
+PRODUCT_VERSION_MAJOR = 6.0.1
 PRODUCT_VERSION_MINOR = build
-PRODUCT_VERSION_MAINTENANCE = 2.0
+PRODUCT_VERSION_MAINTENANCE = 2.1
 ifdef SLIM_BUILD_EXTRA
     SLIM_POSTFIX := -$(SLIM_BUILD_EXTRA)
 endif
 ifndef SLIM_BUILD_TYPE
     SLIM_BUILD_TYPE := UNOFFICIAL
+    PLATFORM_VERSION_CODENAME := UNOFFICIAL
 endif
 
 ifeq ($(SLIM_BUILD_TYPE),DM)
@@ -174,6 +173,8 @@ endif
 ifndef SLIM_POSTFIX
     SLIM_POSTFIX := -$(shell date +"%Y%m%d-%H%M")
 endif
+
+PLATFORM_VERSION_CODENAME := $(SLIM_BUILD_TYPE)
 
 # Set all versions
 SLIM_VERSION := Slim-$(PRODUCT_VERSION_MAJOR).$(PRODUCT_VERSION_MINOR).$(PRODUCT_VERSION_MAINTENANCE)-$(SLIM_BUILD_TYPE)$(SLIM_POSTFIX)
@@ -188,17 +189,3 @@ PRODUCT_PROPERTY_OVERRIDES += \
 
 EXTENDED_POST_PROCESS_PROPS := vendor/slim/tools/slim_process_props.py
 
-PRODUCT_EXTRA_RECOVERY_KEYS += \
-  vendor/slim/build/target/product/security/slim
-
--include vendor/slim-priv/keys/keys.mk
-
-ifeq ($(BOARD_CACHEIMAGE_FILE_SYSTEM_TYPE),)
-  ADDITIONAL_DEFAULT_PROPERTIES += \
-    ro.device.cache_dir=/data/cache
-else
-  ADDITIONAL_DEFAULT_PROPERTIES += \
-    ro.device.cache_dir=/cache
-endif
-
-$(call prepend-product-if-exists, vendor/extra/product.mk)

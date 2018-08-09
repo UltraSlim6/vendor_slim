@@ -16,9 +16,7 @@
 #
 
 PRODUCT_COPY_FILES_LIST=()
-PRODUCT_COPY_FILES_HASHES=()
 PRODUCT_PACKAGES_LIST=()
-PRODUCT_PACKAGES_HASHES=()
 PACKAGE_LIST=()
 VENDOR_STATE=-1
 VENDOR_RADIO_STATE=-1
@@ -26,18 +24,8 @@ COMMON=-1
 ARCHES=
 FULLY_DEODEXED=-1
 
-TMPDIR=$(mktemp -d)
-
-#
-# cleanup
-#
-# kill our tmpfiles with fire on exit
-#
-function cleanup() {
-    rm -rf "${TMPDIR:?}"
-}
-
-trap cleanup 0
+TMPDIR="/tmp/extractfiles.$$"
+mkdir "$TMPDIR"
 
 #
 # setup_vendor
@@ -47,7 +35,6 @@ trap cleanup 0
 # $3: SLIM root directory
 # $4: is common device - optional, default to false
 # $5: cleanup - optional, default to true
-# $6: custom vendor makefile name - optional, default to false
 #
 # Must be called before any other functions can be used. This
 # sets up the internal state for a new vendor configuration.
@@ -76,12 +63,7 @@ function setup_vendor() {
         mkdir -p "$SLIM_ROOT/$OUTDIR"
     fi
 
-    VNDNAME="$6"
-    if [ -z "$VNDNAME" ]; then
-        VNDNAME="$DEVICE"
-    fi
-
-    export PRODUCTMK="$SLIM_ROOT"/"$OUTDIR"/"$VNDNAME"-vendor.mk
+    export PRODUCTMK="$SLIM_ROOT"/"$OUTDIR"/"$DEVICE"-vendor.mk
     export ANDROIDMK="$SLIM_ROOT"/"$OUTDIR"/Android.mk
     export BOARDMK="$SLIM_ROOT"/"$OUTDIR"/BoardConfigVendor.mk
 
@@ -91,7 +73,7 @@ function setup_vendor() {
         COMMON=0
     fi
 
-    if [ "$5" == "false" ] || [ "$5" == "0" ]; then
+    if [ "$5" == "true" ] || [ "$5" == "1" ]; then
         VENDOR_STATE=1
         VENDOR_RADIO_STATE=1
     else
@@ -220,7 +202,6 @@ function write_packages() {
         ARGS=$(target_args "$P")
 
         BASENAME=$(basename "$FILE")
-        DIRNAME=$(dirname "$FILE")
         EXTENSION=${BASENAME##*.}
         PKGNAME=${BASENAME%.*}
 
@@ -255,12 +236,10 @@ function write_packages() {
                 printf 'LOCAL_MULTILIB := %s\n' "$EXTRA"
             fi
         elif [ "$CLASS" = "APPS" ]; then
-            if [ -z "$ARGS" ]; then
-                if [ "$EXTRA" = "priv-app" ]; then
-                    SRC="$SRC/priv-app"
-                else
-                    SRC="$SRC/app"
-                fi
+            if [ "$EXTRA" = "priv-app" ]; then
+                SRC="$SRC/priv-app"
+            else
+                SRC="$SRC/app"
             fi
             printf 'LOCAL_SRC_FILES := %s/%s\n' "$SRC" "$FILE"
             local CERT=platform
@@ -295,16 +274,8 @@ function write_packages() {
         fi
         printf 'LOCAL_MODULE_TAGS := optional\n'
         printf 'LOCAL_MODULE_CLASS := %s\n' "$CLASS"
-        if [ "$CLASS" = "APPS" ]; then
-            printf 'LOCAL_DEX_PREOPT := false\n'
-        fi
         if [ ! -z "$EXTENSION" ]; then
             printf 'LOCAL_MODULE_SUFFIX := .%s\n' "$EXTENSION"
-        fi
-        if [ "$CLASS" = "SHARED_LIBRARIES" ] || [ "$CLASS" = "EXECUTABLES" ]; then
-            if [ "$DIRNAME" != "." ]; then
-                printf 'LOCAL_MODULE_RELATIVE_PATH := %s\n' "$DIRNAME"
-            fi
         fi
         if [ "$EXTRA" = "priv-app" ]; then
             printf 'LOCAL_PRIVILEGED_MODULE := true\n'
@@ -443,35 +414,12 @@ function write_product_packages() {
 # be executed first!
 #
 function write_header() {
-    if [ -f $1 ]; then
-        rm $1
-    fi
-
     YEAR=$(date +"%Y")
 
     [ "$COMMON" -eq 1 ] && local DEVICE="$DEVICE_COMMON"
 
-    NUM_REGEX='^[0-9]+$'
-    if [[ $INITIAL_COPYRIGHT_YEAR =~ $NUM_REGEX ]] && [ $INITIAL_COPYRIGHT_YEAR -le $YEAR ]; then
-        if [ $INITIAL_COPYRIGHT_YEAR -lt 2016 ]; then
-            printf "# Copyright (C) $INITIAL_COPYRIGHT_YEAR-2016 The CyanogenMod Project\n" > $1
-        elif [ $INITIAL_COPYRIGHT_YEAR -eq 2016 ]; then
-            printf "# Copyright (C) 2016 The CyanogenMod Project\n" > $1
-        fi
-        if [ $YEAR -eq 2017 ]; then
-            printf "# Copyright (C) 2017 SlimRoms\n" >> $1
-        elif [ $INITIAL_COPYRIGHT_YEAR -eq $YEAR ]; then
-            printf "# Copyright (C) $YEAR SlimRoms\n" >> $1
-        elif [ $INITIAL_COPYRIGHT_YEAR -le 2017 ]; then
-            printf "# Copyright (C) 2017-$YEAR SlimRoms\n" >> $1
-        else
-            printf "# Copyright (C) $INITIAL_COPYRIGHT_YEAR-$YEAR SlimRoms\n" >> $1
-        fi
-    else
-        printf "# Copyright (C) $YEAR SlimRoms\n" > $1
-    fi
-
-    cat << EOF >> $1
+    cat << EOF > $1
+# Copyright (C) $YEAR The CyanogenMod Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -494,7 +442,6 @@ EOF
 # write_headers:
 #
 # $1: devices falling under common to be added to guard - optional
-# $2: custom guard - optional
 #
 # Calls write_header for each of the makefiles and creates
 # the initial path declaration and device guard for the
@@ -502,19 +449,13 @@ EOF
 #
 function write_headers() {
     write_header "$ANDROIDMK"
-
-    GUARD="$2"
-    if [ -z "$GUARD" ]; then
-        GUARD="TARGET_DEVICE"
-    fi
-
     cat << EOF >> "$ANDROIDMK"
 LOCAL_PATH := \$(call my-dir)
 
 EOF
     if [ "$COMMON" -ne 1 ]; then
         cat << EOF >> "$ANDROIDMK"
-ifeq (\$($GUARD),$DEVICE)
+ifeq (\$(TARGET_DEVICE),$DEVICE)
 
 EOF
     else
@@ -523,7 +464,7 @@ EOF
             exit 1
         fi
         cat << EOF >> "$ANDROIDMK"
-ifneq (\$(filter $1,\$($GUARD)),)
+ifneq (\$(filter $1,\$(TARGET_DEVICE)),)
 
 EOF
     fi
@@ -547,7 +488,8 @@ EOF
 # Return success if adb is up and not in recovery
 function _adb_connected {
     {
-        if [[ "$(adb get-state)" == device ]]
+        if [[ "$(adb get-state)" == device &&
+              "$(adb shell test -e /sbin/recovery; echo $?)" == 0 ]]
         then
             return 0
         fi
@@ -560,7 +502,6 @@ function _adb_connected {
 # parse_file_list:
 #
 # $1: input file
-# $2: blob section in file - optional
 #
 # Sets PRODUCT_PACKAGES and PRODUCT_COPY_FILES while parsing the input file
 #
@@ -573,43 +514,20 @@ function parse_file_list() {
         exit 1
     fi
 
-    if [ $# -eq 2 ]; then
-        LIST=$TMPDIR/files.txt
-        cat $1 | sed -n '/# '"$2"'/I,/^\s*$/p' > $LIST
-    else
-        LIST=$1
-    fi
-
-
     PRODUCT_PACKAGES_LIST=()
-    PRODUCT_PACKAGES_HASHES=()
     PRODUCT_COPY_FILES_LIST=()
-    PRODUCT_COPY_FILES_HASHES=()
 
     while read -r line; do
         if [ -z "$line" ]; then continue; fi
 
-        # If the line has a pipe delimiter, a sha1 hash should follow.
-        # This indicates the file should be pinned and not overwritten
-        # when extracting files.
-        local SPLIT=(${line//\|/ })
-        local COUNT=${#SPLIT[@]}
-        local SPEC=${SPLIT[0]}
-        local HASH="x"
-        if [ "$COUNT" -gt "1" ]; then
-            HASH=${SPLIT[1]}
-        fi
-
         # if line starts with a dash, it needs to be packaged
-        if [[ "$SPEC" =~ ^- ]]; then
-            PRODUCT_PACKAGES_LIST+=("${SPEC#-}")
-            PRODUCT_PACKAGES_HASHES+=("$HASH")
+        if [[ "$line" =~ ^- ]]; then
+            PRODUCT_PACKAGES_LIST+=("${line#-}")
         else
-            PRODUCT_COPY_FILES_LIST+=("$SPEC")
-            PRODUCT_COPY_FILES_HASHES+=("$HASH")
+            PRODUCT_COPY_FILES_LIST+=("$line")
         fi
 
-    done < <(egrep -v '(^#|^[[:space:]]*$)' "$LIST" | LC_ALL=C sort | uniq)
+    done < <(egrep -v '(^#|^[[:space:]]*$)' "$1" | sort | uniq)
 }
 
 #
@@ -667,7 +585,7 @@ function get_file() {
         return 1
     else
         # try to copy
-        cp -r "$SRC/$1" "$2" 2>/dev/null && return 0
+        cp "$SRC/$1" "$2" 2>/dev/null && return 0
 
         return 1
     fi
@@ -696,18 +614,10 @@ function oat2dex() {
 
     # Extract existing boot.oats to the temp folder
     if [ -z "$ARCHES" ]; then
-        echo "Checking if system is odexed and locating boot.oats..."
+        echo "Checking if system is odexed and extracting boot.oats, if applicable. This may take a while..."
         for ARCH in "arm64" "arm" "x86_64" "x86"; do
-            mkdir -p "$TMPDIR/system/framework/$ARCH"
-            if [ -d "$SRC/framework" ] && [ "$SRC" != "adb" ]; then
-                ARCHDIR="framework/$ARCH/"
-            else
-                ARCHDIR="system/framework/$ARCH/"
-            fi
-            if get_file "$ARCHDIR" "$TMPDIR/system/framework/" "$SRC"; then
+            if get_file "system/framework/$ARCH/boot.oat" "$TMPDIR/boot_$ARCH.oat" "$SRC"; then
                 ARCHES+="$ARCH "
-            else
-                rmdir "$TMPDIR/system/framework/$ARCH"
             fi
         done
     fi
@@ -716,33 +626,25 @@ function oat2dex() {
         FULLY_DEODEXED=1 && return 0 # system is fully deodexed, return
     fi
 
-    if [ ! -f "$SLIM_TARGET" ]; then
-        return;
-    fi
-
     if grep "classes.dex" "$SLIM_TARGET" >/dev/null; then
         return 0 # target apk|jar is already odexed, return
     fi
 
     for ARCH in $ARCHES; do
-        BOOTOAT="$TMPDIR/system/framework/$ARCH/boot.oat"
+        BOOTOAT="$TMPDIR/boot_$ARCH.oat"
 
         local OAT="$(dirname "$OEM_TARGET")/oat/$ARCH/$(basename "$OEM_TARGET" ."${OEM_TARGET##*.}").odex"
 
         if get_file "$OAT" "$TMPDIR" "$SRC"; then
-            java -jar "$BAKSMALIJAR" deodex -o "$TMPDIR/dexout" -b "$BOOTOAT" -d "$TMPDIR" "$TMPDIR/$(basename "$OAT")"
+            java -jar "$BAKSMALIJAR" -x -o "$TMPDIR/dexout" -c "$BOOTOAT" -d "$TMPDIR" "$TMPDIR/$(basename "$OAT")"
         elif [[ "$SLIM_TARGET" =~ .jar$ ]]; then
-            # try to extract classes.dex from boot.oats for framework jars
-            JAROAT="$TMPDIR/system/framework/$ARCH/boot-$(basename ${OEM_TARGET%.*}).oat"
-            if [ ! -f "$JAROAT" ]; then
-                JAROAT=$BOOTOAT;
-            fi
-            java -jar "$BAKSMALIJAR" deodex -o "$TMPDIR/dexout" -b "$BOOTOAT" -d "$TMPDIR" "$JAROAT/$OEM_TARGET"
+            # try to extract classes.dex from boot.oat for framework jars
+            java -jar "$BAKSMALIJAR" -x -o "$TMPDIR/dexout" -c "$BOOTOAT" -d "$TMPDIR" -e "/$OEM_TARGET" "$BOOTOAT"
         else
             continue
         fi
 
-        java -jar "$SMALIJAR" assemble "$TMPDIR/dexout" -o "$TMPDIR/classes.dex" && break
+        java -jar "$SMALIJAR" "$TMPDIR/dexout" -o "$TMPDIR/classes.dex" && break
     done
 
     rm -rf "$TMPDIR/dexout"
@@ -787,8 +689,8 @@ function fix_xml() {
     local XML="$1"
     local TEMP_XML="$TMPDIR/`basename "$XML"`.temp"
 
-    grep -a '^<?xml version' "$XML" > "$TEMP_XML"
-    grep -av '^<?xml version' "$XML" >> "$TEMP_XML"
+    grep '^<?xml version' "$XML" > "$TEMP_XML"
+    grep -v '^<?xml version' "$XML" >> "$TEMP_XML"
 
     mv "$TEMP_XML" "$XML"
 }
@@ -797,8 +699,7 @@ function fix_xml() {
 # extract:
 #
 # $1: file containing the list of items to extract
-# $2: path to extracted system folder, an ota zip file, or "adb" to extract from device
-# $3: section in list file to extract - optional
+# $2: path to extracted system folder, or "adb" to extract from device
 #
 function extract() {
     if [ -z "$OUTDIR" ]; then
@@ -806,68 +707,22 @@ function extract() {
         exit 1
     fi
 
-    if [ -z "$3" ]; then
-        parse_file_list "$1"
-    else
-        parse_file_list "$1" "$3"
-    fi
+    parse_file_list "$1"
 
     # Allow failing, so we can try $DEST and/or $FILE
     set +e
 
     local FILELIST=( ${PRODUCT_COPY_FILES_LIST[@]} ${PRODUCT_PACKAGES_LIST[@]} )
-    local HASHLIST=( ${PRODUCT_COPY_FILES_HASHES[@]} ${PRODUCT_PACKAGES_HASHES[@]} )
     local COUNT=${#FILELIST[@]}
     local SRC="$2"
     local OUTPUT_ROOT="$SLIM_ROOT"/"$OUTDIR"/proprietary
-    local OUTPUT_TMP="$TMPDIR"/"$OUTDIR"/proprietary
-
     if [ "$SRC" = "adb" ]; then
         init_adb_connection
     fi
 
-    if [ -f "$SRC" ] && [ "${SRC##*.}" == "zip" ]; then
-        DUMPDIR="$TMPDIR"/system_dump
-
-        # Check if we're working with the same zip that was passed last time.
-        # If so, let's just use what's already extracted.
-        MD5=`md5sum "$SRC"| awk '{print $1}'`
-        OLDMD5=`cat "$DUMPDIR"/zipmd5.txt`
-
-        if [ "$MD5" != "$OLDMD5" ]; then
-            rm -rf "$DUMPDIR"
-            mkdir "$DUMPDIR"
-            unzip "$SRC" -d "$DUMPDIR"
-            echo "$MD5" > "$DUMPDIR"/zipmd5.txt
-
-            # Stop if an A/B OTA zip is detected. We cannot extract these.
-            if [ -a "$DUMPDIR"/payload.bin ]; then
-                echo "A/B style OTA zip detected. This is not supported at this time. Stopping..."
-                exit 1
-            # If OTA is block based, extract it.
-            elif [ -a "$DUMPDIR"/system.new.dat ]; then
-                echo "Converting system.new.dat to system.img"
-                python "$SLIM_ROOT"/vendor/slim/build/tools/sdat2img.py "$DUMPDIR"/system.transfer.list "$DUMPDIR"/system.new.dat "$DUMPDIR"/system.img 2>&1
-                rm -rf "$DUMPDIR"/system.new.dat "$DUMPDIR"/system
-                mkdir "$DUMPDIR"/system "$DUMPDIR"/tmp
-                echo "Requesting sudo access to mount the system.img"
-                sudo mount -o loop "$DUMPDIR"/system.img "$DUMPDIR"/tmp
-                cp -r "$DUMPDIR"/tmp/* "$DUMPDIR"/system/
-                sudo umount "$DUMPDIR"/tmp
-                rm -rf "$DUMPDIR"/tmp "$DUMPDIR"/system.img
-            fi
-        fi
-
-        SRC="$DUMPDIR"
-    fi
-
     if [ "$VENDOR_STATE" -eq "0" ]; then
         echo "Cleaning output directory ($OUTPUT_ROOT).."
-        rm -rf "${OUTPUT_TMP:?}"
-        mkdir -p "${OUTPUT_TMP:?}"
-        if [ -d "$OUTPUT_ROOT" ]; then
-            mv "${OUTPUT_ROOT:?}/"* "${OUTPUT_TMP:?}/"
-        fi
+        rm -rf "${OUTPUT_ROOT:?}/"*
         VENDOR_STATE=1
     fi
 
@@ -880,15 +735,11 @@ function extract() {
         local SPLIT=(${FILELIST[$i-1]//:/ })
         local FILE="${SPLIT[0]#-}"
         local OUTPUT_DIR="$OUTPUT_ROOT"
-        local TMP_DIR="$OUTPUT_TMP"
         local TARGET=
 
         if [ "$ARGS" = "rootfs" ]; then
             TARGET="$FROM"
             OUTPUT_DIR="$OUTPUT_DIR/rootfs"
-            TMP_DIR="$TMP_DIR/rootfs"
-        elif [ -f "$SRC/$FILE" ] && [ "$SRC" != "adb" ]; then
-            TARGET="$FROM"
         else
             TARGET="system/$FROM"
             FILE="system/$FILE"
@@ -906,33 +757,7 @@ function extract() {
         fi
         local DEST="$OUTPUT_DIR/$FROM"
 
-        # Check pinned files
-        local HASH="${HASHLIST[$i-1]}"
-        local KEEP=""
-        if [ "$DISABLE_PINNING" != "1" ] && [ ! -z "$HASH" ] && [ "$HASH" != "x" ]; then
-            if [ -f "$DEST" ]; then
-                local PINNED="$DEST"
-            else
-                local PINNED="$TMP_DIR/$FROM"
-            fi
-            if [ -f "$PINNED" ]; then
-                if [ "$(uname)" == "Darwin" ]; then
-                    local TMP_HASH=$(shasum "$PINNED" | awk '{print $1}' )
-                else
-                    local TMP_HASH=$(sha1sum "$PINNED" | awk '{print $1}' )
-                fi
-                if [ "$TMP_HASH" = "$HASH" ]; then
-                    KEEP="1"
-                    if [ ! -f "$DEST" ]; then
-                        cp -p "$PINNED" "$DEST"
-                    fi
-                fi
-            fi
-        fi
-
-        if [ "$KEEP" = "1" ]; then
-            printf '    + (keeping pinned file with hash %s)\n' "$HASH"
-        elif [ "$SRC" = "adb" ]; then
+        if [ "$SRC" = "adb" ]; then
             # Try SLIM target first
             adb pull "/$TARGET" "$DEST"
             # if file does not exist try OEM target
@@ -940,14 +765,11 @@ function extract() {
                 adb pull "/$FILE" "$DEST"
             fi
         else
-            # Try SLIM target first
-            if [ -f "$SRC/$TARGET" ]; then
+            # Try OEM target first
+            cp "$SRC/$FILE" "$DEST"
+            # if file does not exist try SLIM target
+            if [ "$?" != "0" ]; then
                 cp "$SRC/$TARGET" "$DEST"
-            # if file does not exist try OEM target
-            elif [ -f "$SRC/$FILE" ]; then
-                cp "$SRC/$FILE" "$DEST"
-            else
-                printf '    !! file not found in source\n'
             fi
         fi
 
@@ -965,15 +787,12 @@ function extract() {
             fi
         fi
 
-        if [ -f "$DEST" ]; then
-            local TYPE="${DIR##*/}"
-            if [ "$TYPE" = "bin" -o "$TYPE" = "sbin" ]; then
-                chmod 755 "$DEST"
-            else
-                chmod 644 "$DEST"
-            fi
+        local TYPE="${DIR##*/}"
+        if [ "$TYPE" = "bin" -o "$TYPE" = "sbin" ]; then
+            chmod 755 "$DEST"
+        else
+            chmod 644 "$DEST"
         fi
-
     done
 
     # Don't allow failing
